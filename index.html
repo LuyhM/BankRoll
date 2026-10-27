@@ -51,7 +51,7 @@ a{color:var(--accentT)}
 body.busy .top::after{opacity:1;animation:loadbar 1.1s ease-in-out infinite}
 @keyframes loadbar{0%{left:0;width:0}50%{left:15%;width:70%}100%{left:100%;width:0}}
 /* App de inicio en iPhone: el logo baja para quedar fuera de la franja de desenfoque de iOS */
-html.standalone .top{padding-top:calc(env(safe-area-inset-top) + 30px)}
+html.standalone .top{padding-top:calc(env(safe-area-inset-top) + 18px)}
 .top-in{max-width:1280px;margin:0 auto;padding:12px 32px;display:flex;flex-wrap:wrap;align-items:center;gap:12px 28px}
 .brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:20px;letter-spacing:-.01em}
 .mark{width:34px;height:34px;border-radius:10px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:var(--onAccent)}
