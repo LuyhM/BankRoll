@@ -203,7 +203,8 @@ main{max-width:1280px;margin:0 auto;padding:32px 32px 72px}
 
 /* Formulario */
 .form-head{display:flex;align-items:center;gap:12px}
-.bank-mini{margin-left:auto;text-align:right}
+.bank-mini{margin-left:auto;text-align:right;flex:none;white-space:nowrap}
+.form-head>div:not(.bank-mini){min-width:0}
 .form-grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:24px;align-items:start}
 .form-col{display:flex;flex-direction:column;gap:20px}
 .form-side{position:sticky;top:92px;display:flex;flex-direction:column;gap:12px}
@@ -213,7 +214,13 @@ main{max-width:1280px;margin:0 auto;padding:32px 32px 72px}
 .input:focus{border-color:var(--accent)}
 .input.big{height:52px;font-family:"Space Grotesk",Inter,sans-serif;font-size:18px;font-weight:600}
 .input::placeholder{color:var(--muted)}
-input[type=date].input{color-scheme:dark}
+input[type=date].input{color-scheme:dark;-webkit-appearance:none;appearance:none;min-width:0;max-width:100%;display:block;text-align:left}
+input[type=date].input::-webkit-date-and-time-value{text-align:left;margin:0}
+input[type=date].input::-webkit-calendar-picker-indicator{opacity:.6}
+/* La app solo se desplaza hacia arriba y abajo, nunca a los lados */
+html{overflow-x:hidden}
+main,.top{overflow-x:clip}
+.field,.grid2>*,.form-col,.form-side{min-width:0}
 .selrow{display:flex;gap:10px}
 .selrow .seg{flex:1 1 0}
 .selrow .seg button{height:44px}
