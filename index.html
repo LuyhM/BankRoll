@@ -112,6 +112,9 @@ main{max-width:1280px;margin:0 auto;padding:32px 32px 72px}
 .chart .tip{position:absolute;padding:5px 10px;border-radius:8px;background:var(--raised);border:1px solid #2A313D;font-size:13px;font-weight:600;white-space:nowrap;transform:translate(-50%,-44px)}
 .chart .tip.r{transform:translate(-100%,-44px)}
 .chart .tip.l{transform:translate(0,-44px)}
+.chart .tip.b{transform:translate(-50%,14px)}
+.chart .tip.r.b{transform:translate(-100%,14px)}
+.chart .tip.l.b{transform:translate(0,14px)}
 .chart .msg{position:absolute;left:0;right:0;top:28%;text-align:center;color:var(--muted);font-size:13px}
 .xt{position:relative;height:18px;margin:10px 8px 0 64px;color:var(--muted);font-size:12px}
 .xt span{position:absolute;white-space:nowrap}
@@ -437,7 +440,13 @@ function compute(D) {
   var moves = D.moves.map(function (m) {
     return Object.assign({}, m, { monto: num(m.monto), signed: (m.tipo === 'Retiro' ? -1 : 1) * num(m.monto) });
   });
-  var all = bets.map(function (b) { return b.fecha; }).concat(moves.map(function (m) { return m.fecha; })).filter(Boolean).sort();
+  // Bank inicial vigente de cada mes: el último que registraste para ese mes (reemplaza a los anteriores)
+  var bi = {}, biDay = {};
+  moves.forEach(function (m) { if (m.tipo === 'Bank inicial' && m.fecha) bi[ymOf(m.fecha)] = m; });
+  Object.keys(bi).forEach(function (k) { biDay[bi[k].fecha] = bi[k].monto; });
+  // Depósitos y retiros antiguos (si existieran en la hoja) se siguen respetando
+  var flows = moves.filter(function (m) { return m.tipo === 'Depósito' || m.tipo === 'Retiro'; });
+  var all = bets.map(function (b) { return b.fecha; }).concat(Object.keys(biDay)).concat(flows.map(function (m) { return m.fecha; })).filter(Boolean).sort();
   var start = all.length ? all[0] : D.today;
   var end = D.today;
   if (all.length && all[all.length - 1] > end) end = all[all.length - 1];
@@ -450,25 +459,26 @@ function compute(D) {
     a.n++; a.stake += b.monto; a.net += b.net;
     if (b.estado === 'Ganada') a.w++; else if (b.estado === 'Perdida') a.l++; else a.c++;
   });
-  moves.forEach(function (m) { mv[m.fecha] = (mv[m.fecha] || 0) + m.signed; });
+  flows.forEach(function (m) { mv[m.fecha] = (mv[m.fecha] || 0) + m.signed; });
 
   var days = {}, order = [], bank = 0, curYm = '', cum = 1;
   for (var d = start; d <= end; d = addDays(d, 1)) {
     var a = agg[d] || { net: 0, n: 0, w: 0, l: 0, c: 0, stake: 0, pend: 0 };
     var mov = r2(mv[d] || 0);
-    var open = r2(bank + mov);
+    var setBi = biDay[d] !== undefined;
+    var open = r2((setBi ? biDay[d] : bank) + mov);
     var net = r2(a.net);
     var close = r2(open + net);
     var dayX = open > 0 ? net / open : 0;
     if (ymOf(d) !== curYm) { curYm = ymOf(d); cum = 1; }
     cum *= 1 + dayX;
-    days[d] = { d: d, open: open, close: close, net: net, mov: mov, has: a.n > 0, n: a.n, w: a.w, l: a.l, c: a.c, stake: r2(a.stake), pend: a.pend, dayX: dayX, monthX: cum - 1 };
+    days[d] = { d: d, open: open, close: close, net: net, mov: mov, setBi: setBi, has: a.n > 0, n: a.n, w: a.w, l: a.l, c: a.c, stake: r2(a.stake), pend: a.pend, dayX: dayX, monthX: cum - 1 };
     order.push(d);
     bank = close;
   }
   var pendStake = r2(bets.filter(function (b) { return b.estado === 'Pendiente'; }).reduce(function (s, b) { return s + b.monto; }, 0));
   var today = days[D.today] || { d: D.today, open: bank, close: bank, net: 0, mov: 0, has: false, n: 0, w: 0, l: 0, c: 0, stake: 0, pend: 0, dayX: 0, monthX: 0 };
-  return { bets: bets, moves: moves, days: days, order: order, today: today, bankNow: today.close, pendStake: pendStake };
+  return { bets: bets, moves: moves, bi: bi, days: days, order: order, today: today, bankNow: today.close, pendStake: pendStake };
 }
 
 function monthStats(ym) {
@@ -496,7 +506,9 @@ function monthStats(ym) {
     pos: withBets.filter(function (x) { return x.net > 0; }).length,
     betDays: withBets.length,
     startBank: list.length ? list[0].open : null,
-    moves: C.moves.filter(function (m) { return ymOf(m.fecha) === ym; }).sort(function (a, b) { return a.fecha < b.fecha ? -1 : 1; }),
+    bi: C.bi[ym] || null,
+    prevClose: C.days[addDays(ym + '-01', -1)] ? C.days[addDays(ym + '-01', -1)].close : null,
+    flows: C.moves.filter(function (m) { return m.tipo !== 'Bank inicial' && ymOf(m.fecha) === ym; }),
     byMarket: group('mercado'),
     byMode: group('modalidad')
   };
@@ -588,7 +600,7 @@ function viewMes() {
 
   return '<section class="page">' +
     '<div class="head"><div><div class="eyebrow">Resumen mensual</div>' + monthNav(ym) + '<p class="sub">' + sub + '</p></div>' +
-    '<button class="btn-ghost" data-act="view" data-v="mov">' + IC.swap + ' Depósito o retiro</button></div>' +
+    '<button class="btn-ghost" data-act="view" data-v="mov">' + IC.flag + ' Bank inicial</button></div>' +
 
     '<section class="kpis" aria-label="Indicadores del mes">' +
       kpi(isCur ? 'Bank actual' : 'Bank al cierre', money(isCur ? C.bankNow : (last ? last.close : 0)), '',
@@ -642,7 +654,7 @@ function chartBlock(M) {
   var xt = [1, 8, 15, 22, nd].map(function (d, i, a) {
     return '<span style="left:' + (d / nd * 100) + '%;transform:translateX(-' + (i === a.length - 1 ? 100 : 50) + '%)">' + String(d).padStart(2, '0') + '/' + M.ym.slice(5) + '</span>';
   }).join('');
-  var tipCls = lp.x > 860 ? ' r' : lp.x < 140 ? ' l' : '';
+  var tipCls = (lp.x > 860 ? ' r' : lp.x < 140 ? ' l' : '') + (lp.y < 50 ? ' b' : '');
   var aria = 'Bank al cierre de cada día: empezó el mes en ' + money(M.startBank) + ' y va en ' + money(list[list.length - 1].close) + ' (' + pct(M.twr) + ').';
 
   return head + '<div class="chart" role="img" aria-label="' + esc(aria) + '">' + grid +
@@ -657,11 +669,13 @@ function chartBlock(M) {
 }
 
 function movBlock(M) {
-  return '<div><h2 class="h2" id="t-mov">Movimientos del bank</h2><p class="sub">Depósitos y retiros no cuentan como ganancia ni pérdida</p></div>' +
-    '<div class="mvs">' + (M.moves.length ? M.moves.map(mvRow).join('') : '<div class="empty s">Sin movimientos este mes</div>') + '</div>' +
-    '<div class="grid2" style="margin-top:auto">' +
-      '<button class="btn-ghost" data-act="view" data-v="mov" data-t="Depósito">+ Depósito</button>' +
-      '<button class="btn-ghost" data-act="view" data-v="mov" data-t="Retiro">− Retiro</button></div>';
+  var sub = M.bi ? 'Lo fijaste desde el ' + ddmm(M.bi.fecha) : M.prevClose !== null ? 'Sigue con lo que cerraste el mes anterior' : 'Tu punto de partida';
+  return '<div><h2 class="h2" id="t-mov">Bank del mes</h2><p class="sub">' + sub + '</p></div>' +
+    '<div class="mvs"><div class="mv"><span class="mv-ic">' + IC.flag + '</span><div class="min0"><div class="b">Bank inicial</div><div class="xs muted">' + ymName(M.ym) + '</div></div>' +
+      '<span class="b num">' + (M.startBank !== null ? money(M.startBank) : '—') + '</span></div>' +
+      M.flows.map(mvRow).join('') + '</div>' +
+    (M.prevClose !== null ? '<div>' + kv('Cierre de ' + ymName(ymAdd(M.ym, -1)).toLowerCase(), money(M.prevClose)) + '</div>' : '') +
+    '<button class="btn-ghost wide" data-act="view" data-v="mov" style="margin-top:auto">Cambiar bank inicial</button>';
 }
 
 function calBlock(M) {
@@ -705,7 +719,7 @@ function detailBlock() {
     '<div class="grid2">' +
       '<div class="tile"><div class="lbl">Resultado del día</div><div class="v num" style="color:' + tone(x.dayX) + '">' + pct(x.dayX) + '</div><div class="s ink2 num">' + smoney(x.net) + '</div></div>' +
       '<div class="tile"><div class="lbl">Mes al cierre del día</div><div class="v num" style="color:' + tone(x.monthX) + '">' + pct(x.monthX) + '</div><div class="s ink2 num">' + money(x.close) + '</div></div>' +
-    '</div><div>' + kv('Abriste con', money(x.open)) + (x.mov ? kv('Movimientos del día', smoney(x.mov)) : '') + kv('Cerraste con', money(x.close)) +
+    '</div><div>' + kv(x.setBi ? 'Abriste con (bank inicial)' : 'Abriste con', money(x.open)) + (x.mov ? kv('Movimientos del día', smoney(x.mov)) : '') + kv('Cerraste con', money(x.close)) +
     kv('Apostado', money(x.stake)) + kv('Yield del día', x.stake ? pct(x.net / x.stake) : '—') + '</div>';
   if (bets.length) {
     h += '<div class="stack-s"><h3 class="h3">Apuestas del día</h3>' + bets.map(miniBet).join('') + '</div>';
@@ -894,24 +908,41 @@ function updatePreview() {
 /* ============================================================
  * Vista: Movimientos del bank
  * ============================================================ */
-function defaultMov(tipo) { return { tipo: tipo || 'Depósito', fecha: S.D.today, monto: '', nota: '' }; }
+function defaultMov() { return { target: 'este', monto: '' }; }
 function viewMov() {
-  var f = S.mform, all = S.C.moves.slice().sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; });
+  var C = S.C, f = S.mform, cur = ymOf(S.D.today), nxt = ymAdd(cur, 1), M = monthStats(cur);
+  var ym = f.target === 'proximo' ? nxt : cur;
+  var eff = C.bi[ym];
+  var sugerido = f.target === 'proximo' ? C.bankNow : (M.startBank !== null ? M.startBank : C.bankNow);
+  var nota = f.target === 'proximo'
+    ? (eff ? ymName(nxt) + ' ya tiene un bank inicial de ' + money(eff.monto) + '. Si guardas, lo reemplazas.'
+           : ymName(nxt) + ' empezará con este monto. Si no lo fijas, empezará con lo que cierres este mes.')
+    : 'Reemplaza el bank inicial de ' + ymName(cur).toLowerCase() + ' y recalcula los % del mes desde el ' + ddmm(biFecha(cur)) + '.';
+  var hist = Object.keys(C.bi).sort().reverse().map(function (k) {
+    var m = C.bi[k];
+    return '<div class="mv"><span class="mv-ic">' + IC.flag + '</span><div class="min0"><div class="b">' + ymName(k) + '</div>' +
+      '<div class="xs muted">Desde el ' + ddmm(m.fecha) + '/' + m.fecha.slice(0, 4) + '</div></div><span class="b num">' + money(m.monto) + '</span></div>';
+  }).join('');
+  var flows = C.moves.filter(function (m) { return m.tipo !== 'Bank inicial'; }).sort(function (a, b) { return a.fecha < b.fecha ? 1 : -1; });
   return '<section class="page narrow">' +
-    '<div class="form-head"><div><div class="eyebrow">Bank</div><h1 class="h1" style="font-size:30px">Movimientos</h1><p class="sub">Depósitos y retiros no cuentan como ganancia ni pérdida</p></div>' +
-      '<div class="bank-mini"><div class="xs muted">Bank actual</div><div class="b num" style="font-size:18px">' + money(S.C.bankNow) + '</div></div></div>' +
-    '<section class="card stack" aria-label="Nuevo movimiento">' +
-      '<div class="field"><span class="flabel" id="l-mt">Tipo</span><div class="seg" role="group" aria-labelledby="l-mt">' +
-        ['Depósito', 'Retiro', 'Bank inicial'].map(function (t) { return '<button type="button" data-act="mt" data-v="' + t + '" aria-pressed="' + (t === f.tipo) + '">' + t + '</button>'; }).join('') + '</div></div>' +
-      '<div class="grid2">' +
-        '<label class="field"><span class="flabel">Fecha</span><input class="input" type="date" data-m="fecha" value="' + esc(f.fecha) + '"></label>' +
-        '<label class="field"><span class="flabel">Monto (S/)</span><input class="input big" inputmode="decimal" data-m="monto" value="' + esc(f.monto) + '" placeholder="0,00"></label></div>' +
-      '<label class="field"><span class="flabel">Nota (opcional)</span><input class="input" data-m="nota" value="' + esc(f.nota) + '" placeholder="Ej. Recarga"></label>' +
-      (f.tipo === 'Bank inicial' ? '<p class="xs muted" style="margin:0">Úsalo solo si reinicias tu bank desde cero: se suma como dinero nuevo.</p>' : '') +
-      '<button class="btn-acc wide" data-act="save-mov">Guardar movimiento</button>' +
+    '<div class="form-head"><div><div class="eyebrow">Bank</div><h1 class="h1" style="font-size:30px">Bank inicial</h1>' +
+      '<p class="sub">El dinero con el que empiezas cada mes. Si no lo cambias, el mes sigue con lo que cerraste el anterior.</p></div>' +
+      '<div class="bank-mini"><div class="xs muted">Bank actual</div><div class="b num" style="font-size:18px">' + money(C.bankNow) + '</div></div></div>' +
+    '<section class="card hero" aria-label="Bank inicial de este mes"><span class="ink2" style="font-weight:500">Bank inicial de ' + ymName(cur).toLowerCase() + '</span>' +
+      '<div class="big num">' + (M.startBank !== null ? money(M.startBank) : '—') + '</div>' +
+      '<div class="xs muted">' + (C.bi[cur] ? 'Fijado desde el ' + ddmm(C.bi[cur].fecha) : 'Es lo que cerraste el mes anterior') + '</div></section>' +
+    '<section class="card stack" aria-label="Cambiar bank inicial">' +
+      '<h2 class="h2">Cambiar bank inicial</h2>' +
+      '<div class="field"><span class="flabel" id="l-bt">Mes</span><div class="seg" role="group" aria-labelledby="l-bt">' +
+        [['este', cur], ['proximo', nxt]].map(function (o) {
+          return '<button type="button" data-act="bt" data-v="' + o[0] + '" aria-pressed="' + (o[0] === f.target) + '">' + MESES[+o[1].slice(5, 7) - 1] + '</button>';
+        }).join('') + '</div></div>' +
+      '<label class="field"><span class="flabel">Monto (S/)</span><input class="input big" inputmode="decimal" data-m="monto" value="' + esc(f.monto) + '" placeholder="' + fmtNum(sugerido, 2) + '"></label>' +
+      '<p class="xs muted" style="margin:0">' + esc(nota) + '</p>' +
+      '<button class="btn-acc wide" data-act="save-mov">Guardar bank inicial</button>' +
     '</section>' +
     '<div class="sec-h"><h2>Historial</h2></div>' +
-    (all.length ? '<div class="mvs">' + all.map(mvRow).join('') + '</div>' : '<div class="empty">Sin movimientos</div>') +
+    '<div class="mvs">' + (hist || '<div class="empty">Sin registros</div>') + flows.map(mvRow).join('') + '</div>' +
     '<div class="sec-h"><h2>Conexión</h2></div>' +
     '<section class="card" style="display:flex;align-items:center;gap:12px;padding:16px 18px"><div class="min0"><div class="b">Conectado a tu hoja</div>' +
       '<div class="xs muted" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + esc(S.cfg ? S.cfg.url : '') + '</div></div>' +
@@ -922,6 +953,16 @@ function viewMov() {
 /* ============================================================
  * Diálogo y avisos
  * ============================================================ */
+function biFecha(ym) { var e = S.C.bi[ym]; return e ? e.fecha : ym + '-01'; }
+function saveBankInicial(ym, monto, after) {
+  call('saveMove', [{ tipo: 'Bank inicial', fecha: biFecha(ym), monto: monto, nota: 'Bank inicial de ' + ymName(ym).toLowerCase() }], 'Bank inicial guardado', function () {
+    if (after) after();
+  });
+}
+function closeModal() {
+  S.modal = null;
+  renderModal();
+}
 function renderModal() {
   var el = document.getElementById('modal'), m = S.modal;
   if (!m) { el.hidden = true; el.innerHTML = ''; return; }
@@ -1077,11 +1118,9 @@ function saveBet() {
   });
 }
 function saveMov() {
-  var f = S.mform;
-  if (!(num(f.monto) > 0)) return toast('Ingresa el monto.', true);
-  call('saveMove', [{ tipo: f.tipo, fecha: f.fecha || S.D.today, monto: num(f.monto), nota: String(f.nota || '').trim() }], 'Movimiento guardado', function () {
-    S.mform = defaultMov(f.tipo);
-  });
+  var f = S.mform, cur = ymOf(S.D.today), ym = f.target === 'proximo' ? ymAdd(cur, 1) : cur, monto = num(f.monto);
+  if (!(monto > 0)) return toast('Ingresa el monto del bank inicial.', true);
+  saveBankInicial(ym, monto, function () { S.mform = defaultMov(); });
 }
 
 /* ============================================================
@@ -1103,7 +1142,7 @@ function render() {
 }
 
 document.addEventListener('click', function (e) {
-  if (e.target.id === 'modal') { S.modal = null; renderModal(); return; }
+  if (e.target.id === 'modal') { closeModal(); return; }
   var t = e.target.closest('[data-act]');
   if (!t || t.disabled) return;
   var a = t.getAttribute('data-act'), v = t.getAttribute('data-v');
@@ -1113,7 +1152,7 @@ document.addEventListener('click', function (e) {
   switch (a) {
     case 'view':
       if ((v === 'nueva' || v === 'mov') && S.view !== 'nueva' && S.view !== 'mov') S.prev = S.view;
-      if (v === 'mov') S.mform = defaultMov(t.getAttribute('data-t') || (S.mform && S.mform.tipo));
+      if (v === 'mov') S.mform = defaultMov();
       S.view = v; render(); window.scrollTo(0, 0); break;
     case 'month': S.ym = ymAdd(S.ym, +t.getAttribute('data-d')); S.sel = null; render(); break;
     case 'sel': S.sel = t.getAttribute('data-d'); render(); break;
@@ -1126,14 +1165,14 @@ document.addEventListener('click', function (e) {
       render(); break;
     case 'line': S.form.linea = Math.max(0.5, Math.round((S.form.linea + Number(t.getAttribute('data-d'))) * 10) / 10); render(); break;
     case 'nsel': S.form.nsel = Math.max(2, Math.min(20, S.form.nsel + Number(t.getAttribute('data-d')))); render(); break;
-    case 'mt': S.mform.tipo = v; render(); break;
+    case 'bt': S.mform.target = v; render(); break;
     case 'disconnect': disconnect(); break;
     case 'save': saveBet(); break;
     case 'save-mov': saveMov(); break;
     case 'settle': call('settleBet', [t.getAttribute('data-id'), v, 0], v === 'Pendiente' ? 'Apuesta reabierta' : 'Resultado guardado'); break;
     case 'cashout': S.modal = { type: 'cashout', id: t.getAttribute('data-id') }; renderModal(); break;
     case 'del': S.modal = { type: 'del', id: t.getAttribute('data-id') }; renderModal(); break;
-    case 'modal-cancel': S.modal = null; renderModal(); break;
+    case 'modal-cancel': closeModal(); break;
     case 'modal-ok':
       var m = S.modal;
       if (!m) break;
@@ -1157,7 +1196,7 @@ document.addEventListener('input', function (e) {
 });
 document.addEventListener('keydown', function (e) {
   if (e.key === 'Enter' && (e.target.id === 'c-url' || e.target.id === 'c-key')) { e.preventDefault(); doConnect(); return; }
-  if (e.key === 'Escape' && S.modal) { S.modal = null; renderModal(); }
+  if (e.key === 'Escape' && S.modal) { closeModal(); }
   if (e.key === 'Enter' && S.modal && e.target.id === 'm-in') { var ok = document.querySelector('[data-act="modal-ok"]'); if (ok) ok.click(); }
 });
 
